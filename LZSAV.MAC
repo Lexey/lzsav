@@ -1,0 +1,666 @@
+	.MCALL	.WAIT,.CLOSE,.LOCK,.SETTOP
+;-----------------------------------------------------------------------
+TROOT=UNP0ST
+TREE=TROOT+512.
+WINDOW=TREE+<6.*4097.>
+RBUF=WINDOW
+WBUF=WINDOW+<5.*1024.>
+QELD=WBUF+1024.
+BLK0=QELD+40.
+DEVLD=BLK0+512.
+;-----------------------------------------------------------------------
+UNP0LN=<UNP0TOP-UNP0ST>/2
+UNPLEN=<UNPTOP-UNPST>/2
+TLARGE=TREE+<2.*4097.>
+TSMALL=TREE+<4.*4097.>
+MAXCON=18.
+MINCON=3
+;-----------------------------------------------------------------------
+	.ASECT
+	.=20
+	IOTD				;IOT
+	.=40
+	ST				;START
+	SPPNT				;STACK
+	400				;LOAD BLOCK 0
+;--------------------------------------------------------------------
+	.=764
+SPPNT:	DEVLD				;FOR SETTOP
+	QELD
+	PROMPT				;FOR PRINT
+	0
+	EXT				;FOR CSIGEN
+	DEVLD
+;---------------------------------------------------------------------
+;.=1000
+EXT:	.RAD50	/SAVSAVSAVSAV/
+RAREA:	.BYTE	3,10
+	.WORD	0,WBUF,256.,1		;READ
+WAREA:	.BYTE	0,11
+	.WORD	0,WBUF,256.,1		;WRITE	
+PCTOP:	0				;PACKED CODE TOP
+WORKB:	0				;WORK BYTES
+ALLB:	-1				;ALL BYTES
+;----------------------------------------------------------------------
+IOTD:	MOV	#PNAME,R0		;ERRORS IOT
+	EMT	351
+	MOV	(SP)+,R0
+	EMT	351
+	EMT	350
+PNAME:	.ASCII	<12><15>/?LZSAV-F-/<200>
+	.EVEN
+;-----------------------------------------------------------------------
+PROMPT:	.ASCII	<12><15>/SAV to LZ-packed file converter V1.04, /
+	.ASCIZ	/(C) Ostapenko Alexey, 1994/
+	.EVEN
+;-----------------------------------------------------------------------
+ST:	CLR	@#40
+	.LOCK
+	.SETTOP (SP)+
+	BCC	1$
+	IOT
+	.ASCIZ	/Not enough available memory/
+	.EVEN
+1$:	MOV	#2,R0
+	EMT	353			;.QSET
+	MOV	(SP)+,R0
+	EMT	351
+	EMT	344			;CSIGEN
+	MOV	#500,R0			;START ADRESS
+	DEC	(SP)+
+	BMI	10$
+	BEQ	11$
+	IOT
+	.ASCIZ	/Too many switches/
+	.EVEN
+11$:	CMPB	@SP,#'A
+	BEQ	12$
+	IOT
+	.ASCIZ	/Invalid switch/
+	.EVEN
+12$:	TST	(SP)+
+	BPL	13$
+	MOV	(SP)+,R0		;NEW START ADRESS
+	BIC	#1,R0
+13$:	BIC	SP,@#14$		;BEQ=>BR
+10$:	CALL	READ			;READ BLOCK INTO WINDOW
+	CALL	RWAIT
+	MOV	#<WBUF+46>,R1
+	BIT	SP,-(R1)		;OVERLAY?
+14$:	BEQ	5$
+	IOT
+	.ASCIZ	/Can't convert overlay file/
+	.EVEN
+5$:	CMP	R0,SP
+	BCC	15$
+	BIS	#400,@R1
+15$:	MOV	-(R1),@#OLDSP
+	MOV	-(R1),@#OLDPC
+	MOV	R0,@R1
+	MOV	@#54,R3
+	MOV	38.(R3),R3		;LENGTH IN BLOCKS
+	ASH	#11,R3			;MAX BYTECNT
+	MOV	@#<WBUF+50>,@#ALLB	;TOP
+	ADD	#2,@#ALLB
+	CMP	R3,@#ALLB
+	BPL	2$
+	MOV	R3,@#ALLB
+2$:	CMP	@#ALLB,R0
+	BCC	16$
+	IOT
+	.ASCIZ	/Invalid adress/		
+	.EVEN
+16$:	SUB	SP,@#ALLB		;ALL BYTES
+	ADD	R0,@#PCTOP
+	ADD	R0,@#CTOP
+18$:	SUB	SP,R0
+	BMI	17$
+	CALL	WWAIT
+	CALL	WRITE
+	SUB	SP,@#WORKB
+	MOV	@#<WAREA+4>,@#<RAREA+4>
+	CALL	READ
+	CALL	RWAIT
+	BR	18$
+17$:	MOV	R0,R2
+	NEG	R2			;COPY COUNT
+	ADD	SP,R0
+	SUB	R0,@#LENGTH
+	ASR	@#LENGTH
+	SUB	R0,@#WORKB		;LENGTH
+	MOV	@#<RAREA+4>,R1
+	MOV	#<RBUF+512.>,@#<RAREA+4>
+	SUB	SP,R1
+	ADD	R0,R1
+	MOV	R1,R4
+	MOV	R2,R3
+	SUB	R0,@#<TSTW+2>
+	ADD	#RBUF,R0
+3$:	MOVB	(R1)+,(R0)+
+	SOB	R2,3$
+	MOV	#UNP0LN,R2
+	MOV	#UNP0ST,R1
+4$:	MOV	(R1)+,(R4)+
+	DEC	@#<TSTW+2>
+	CALL	TSTW
+	SOB	R2,4$
+;-----------------------------------------------------------------------------
+;R4 POINTS TO FIRST POSITION IN WRITE BUFFER,R3-START NODE
+;-----------------------------------------------------------------------------
+
+;-----------------------------------------------------------------------------
+;FILES ALREADY OPENED,LZSS CODING BEGINS
+;TREE STRUCTURE: 0-4096. - PARENTS, 4097.-8192. - LARGE , 8192.-.. SMALL 
+	
+	MOV	#TROOT,R0
+	MOV	#<TLARGE-TROOT>/2,R1
+CLT:	CLR	(R0)+
+	SOB	R1,CLT	
+	MOV	#WINDOW,R1		;START POSITION IN WINDOW
+	ADD	SP,R1
+	SUB	R3,R1
+;-----------------------------------------------------------------------------
+;USE R1-CURRENT POSITION,R3-CURRENT NODE,R4-WORK BYTES,R5-ALL BYTES
+
+CSTART:	MOV	#8.,@#M1106		;CODING START,R0-NUMBER OF BITS
+					;R2-FLAGS BYTE
+	INC	@#PCTOP			;INC PACKED CODE TOP
+	MOV	R4,@#<WFLAG-4>
+	INC	R4
+	CALL	TSTW
+	CLR	-(SP)
+M1105:	MOV	R4,-(SP)
+	CALL	DELNOD
+	CALL	ADDSTR
+	MOV	(SP)+,R4
+	CMP	#<MINCON-1>,R0		;R0>MINCONS-1
+	BCS	1003$			;YES
+	RORB	@SP
+	INC	@#CTOP			;INCREMENT CODE TOP ADRESS
+	INC	@#PCTOP			;INCREMENT PACKED CODE TOP
+	MOVB	(R1)+,(R4)+
+	CALL	TSTW
+	BR	1006$
+1003$:	RORB	@SP			;1=POINTER TO CONSIDERENCE
+	ADD	R0,@#CTOP		;COMPUTING NEW PACKED
+	ADD	#2,@#PCTOP
+	CMP	@#PCTOP,@#CTOP		;	   &
+	BPL	1204$			;UNPACKED CODE TOP
+	MOV	@#CTOP,@#PCTOP
+1204$:	DEC	R0
+	SUB	R0,@#WORKB
+	MOV	R0,R5
+	TST	-(R5)			;SUB #2,R5
+	ASH	#12.,R5			;UP 4 BITS-LEN OF CONSIDERENCE
+	SUB	R3,R2
+	BPL	1005$
+	ADD	#4096.,R2
+1005$:	BIS	R2,R5			;LOW 12 BITS-NEGATIVE OFFSET
+	SWAB	R5
+	MOVB	R5,(R4)+		;HIGH BYTE
+	CALL	TSTW
+	SWAB	R5
+	MOVB	R5,(R4)+		;LOW BYTE
+	CALL	TSTW
+	INC	R1
+	MOV	R4,-(SP)
+	MOV	R0,@#1011$
+1004$:	DEC	R3
+	BNE	1112$
+	MOV	#4096.,R3
+1112$:	CMP	R1,#WBUF
+	BNE	1111$
+	MOV	#WINDOW,R1
+1111$:	CALL	DELNOD
+	CALL	ADDSTR
+	INC	R1
+	DEC	(PC)+
+1011$:	0
+	BNE	1004$
+	MOV	(SP)+,R4
+1006$:	DEC	@#WORKB
+	BEQ	FIN
+	TST	(PC)+
+RFLAG:	0
+	BEQ	1220$	
+	CMP	@#WORKB,#547.		;512.+MAXCON+LOOK_AHEAD_SIZE-1
+	BPL	NOREAD
+	CALL	RWAIT
+	CLR	@#RFLAG
+1220$:
+FL1:	CMP	@#WORKB,#512.
+	BHI	NOREAD
+	CALL	READ
+	INC	@#RFLAG
+	BR	NOREAD
+ALLR:	CMP	@#WORKB,#18.
+	BPL	NOREAD
+	MOV	@#WORKB,@#LCONS
+NOREAD:	DEC	R3
+	BNE	1114$
+	MOV	#4096.,R3
+1114$:	CMP	R1,#WBUF
+	BNE	1013$
+	MOV	#WINDOW,R1
+1013$:	DEC	(PC)+
+M1106:	0
+	BEQ	1008$
+	JMP	@#M1105
+1008$:	MOVB	(SP)+,@(PC)+
+	0
+	TST	(PC)+
+WFLAG:	0
+	BEQ	1009$
+	ADD	#256.,@#LENGTH
+	CALL	WRITE
+	CLR	@#WFLAG
+1009$:	JMP	@#CSTART
+
+FIN:	DEC	@#M1106
+	BEQ	1230$
+	ASRB	@SP
+	BR	FIN
+1230$:	BIT	#1,R4
+	BEQ	1130$
+	CLRB	(R4)+
+	CALL	TSTW
+	
+1130$:	MOV	SP,R1
+	SUB	@#<TSTW+2>,R1
+	ASR	R1
+	ADD	R1,@#LENGTH
+	MOV	#UNPST,R1
+	MOV	#UNPLEN,R2
+1124$:	MOV	(R1)+,(R4)+
+	DEC	@#<TSTW+2>
+	CALL	TSTW
+	SOB	R2,1124$
+	MOV	#1121$,@#<FIN-2>
+	BR	WFLAG-6
+1121$:	SUB	@#<WAREA+4>,R4
+	INC	@#PCTOP
+	BIC	#1,@#PCTOP		;PACKED CODE TOP
+	ADD	#<UNPLEN*2+2>,@#PCTOP
+	MOV	@#<WAREA+2>,R1
+	ASH	#11,R1
+	ADD	R4,R1			;PACKED CODE END
+	CALL	WWAIT
+	TST	R4
+	BEQ	21$
+	CALL	WRITE
+	CALL	WWAIT
+21$:
+;ALL DATA WAS WRITTEN
+	.CLOSE	#3			;CLOSE INPUT CHANNEL
+	MOV	#<WAREA+2>,R0
+	MOV	@R0,R3			;BLK COUNT
+	CLR	(R0)+
+	MOV	#BLK0,@R0
+	MOV	#<BLK0+42>,R2
+	TST	-(R1)
+	MOV	R1,(R2)+		;NEW SP
+	CMP	(R2)+,(R2)+
+	CMP	@R2,@#PCTOP		;CODE TOP
+	BPL	800$
+	MOV	@#PCTOP,@R2
+800$:	ADD	#330,R2			;MAKE BITMAP
+	MOV	#10,R0
+803$:	CLR	-(R2)
+	SOB	R0,803$
+801$:	MOV	#200,R0
+802$:	BISB	R0,@R2
+	DEC	R3
+	BEQ	804$
+	ASR	R0
+	BNE	802$
+	TSTB	(R2)+
+	BR	801$
+804$:	MOV	#401,@#<WRITE-10>
+	CALL	WRITE
+	CALL	WWAIT
+	.CLOSE	#0
+	EMT	350
+	
+;---------------------------------------------------------------------------
+TSTW:	DEC	(PC)+
+	512.
+	BNE	1100$
+	CALL	WWAIT
+	MOV	#512.,@#<TSTW+2>
+	CMP	R4,#QELD
+	BNE	1101$
+	MOV	#WBUF,R4
+1101$:	INC	@#WFLAG
+1100$:	RETURN	
+
+;------------------------------------------------------------------------------
+
+DELNOD:	MOV	R3,-(SP)
+	ASL	R3
+	TST	TREE(R3)		;PARENT==UNUSED?
+	BEQ	501$
+	TST	TSMALL(R3)		;SMALL==UNUSED?
+	BNE	502$
+	MOV	TLARGE(R3),R5
+	MOV	TREE(R3),R4
+	ROL	R4
+	BCS	5030$
+	CMP	TSMALL(R4),@SP		;PARENT.SMALL==NODE?
+	BNE	503$
+	MOV	R5,TSMALL(R4)		;PARENT.SMALL=NODE.LARGE
+	BR	504$
+5030$:	MOV	R5,TROOT(R4)
+	BR	504$
+503$:	MOV	R5,TLARGE(R4)		;PARENT.LARGE=NODE.LARGE
+504$:	ASL	R5
+	MOV	TREE(R3),TREE(R5)	;NODE.LARGE.PARENT=NODE.PARENT
+	BR	501$
+502$:	TST	TLARGE(R3)		;LARGE=UNUSED
+	BNE	505$
+	MOV	TSMALL(R3),R5
+	MOV	TREE(R3),R4
+	ROL	R4
+	BCS	5060$
+	CMP	TSMALL(R4),@SP		;PARENT.SMALL==NODE?
+	BNE	506$
+	MOV	R5,TSMALL(R4)		;PARENT.SMALL=NODE.SMALL
+	BR	507$
+5060$:	MOV	R5,TROOT(R4)
+	BR	507$
+506$:	MOV	R5,TLARGE(R4)		;PARENT.LARGE=NODE.SMALL
+507$:	ASL	R5
+	MOV	TREE(R3),TREE(R5)	;NODE.SMALL.PARENT=NODE.PARENT
+	BR	501$
+505$:	MOV	TSMALL(R3),R4		;TEMP=NODE.SMALL
+508$:	ASL	R4
+	TST	TLARGE(R4)		;WHILE(TEMP.LARGE<>UNUSED)
+	BEQ	509$
+	MOV	TLARGE(R4),R4		;TEMP=TEMP.LARGE
+	BR	508$
+509$:	MOV	TREE(R4),R5		;TEMP.PARENT
+	MOV	TSMALL(R4),R0
+	ASL	R5
+	CMP	R5,R3
+	BNE	511$
+	MOV	R0,TSMALL(R5)
+	BR	512$
+511$:	MOV	R0,TLARGE(R5)	;TEMP.PARENT.LARGE=TEMP.SMALL
+512$:	ASR	R5
+	ASL	R0
+	MOV	R5,TREE(R0)		;TEMP.SMALL.PARENT=TEMP.PARENT
+	MOV	TLARGE(R3),R0
+	MOV	R0,TLARGE(R4)		;TEMP.LARGE=NODE.LARGE
+	ASL	R0
+	MOV	R4,-(SP)
+	ASR	@SP
+	MOV	@SP,TREE(R0)
+	MOV	TSMALL(R3),R0
+	MOV	R0,TSMALL(R4)		;TEMP.SMALL=NODE.SMALL
+	ASL	R0
+	MOV	TREE(R3),R5
+	MOV	R5,TREE(R4)		;TEMP.PARENT=NODE.PARENT
+	MOV	(SP)+,R4
+	MOV	R4,TREE(R0)
+	ROL	R5
+	BCS	5010$
+	CMP	TSMALL(R5),@SP		;NODE.PARENT.SMALL=NODE?
+	BNE	510$
+	MOV	R4,TSMALL(R5)		;NODE.PARENT.SMALL=TEMP
+	BR	501$
+5010$:	MOV	R4,TROOT(R5)
+	BR	501$
+510$:	MOV	R4,TLARGE(R5)		;NODE.PARENT.LARGE=TEMP
+501$:	CLR	TREE(R3)		;NODE.PARENT=UNUSED
+	MOV	(SP)+,R3
+	RETURN
+
+;----------------------------------------------------------------------------
+;R2-POINTS TO CONSIDERENCE NODE,R0-LENGTH OF CONSIDERENCE,R3-CURRENT 
+;NODE,R1-POINTS TO CURRENT ADRESS
+
+ADDSTR:	MOV	#1,R0			;LENGTH OF CONSIDERENCE
+	CLR	R4
+	BISB	(R1)+,R4		;FIRST CHAR
+	ASL	R4
+	TST	TROOT(R4)
+	BNE	600$
+	MOV	R3,TROOT(R4)
+	SEC
+	ROR	R4
+	ASL	R3
+	MOV	R4,TREE(R3)
+	CLR	TLARGE(R3)
+	CLR	TSMALL(R3)
+	ASR	R3
+	TSTB	-(R1)
+	RETURN
+600$:	MOV	TROOT(R4),R4
+	TST	-(SP)
+	MOV	R0,-(SP)
+M607:	MOV	R3,R5
+	SUB	R4,R5			;R5-ADRESS OF CONSIDIRENCE
+	BLE	6005$
+	SUB	#4096.,R5
+6005$:	ADD	R1,R5
+	CMP	R5,#WINDOW
+	BPL	605$
+	ADD	#<1024.*5.>,R5
+605$:	CMP	@SP,R0
+	BMI	606$
+	MOV	R2,2(SP)
+	MOV	@SP,R0
+606$:	MOV	R4,R2
+	MOV	R1,R4
+	MOV	#1,@SP
+601$:	CMP	R4,#WBUF
+	BLO	604$
+	MOV	#WINDOW,R4
+604$:	CMP	R5,#WBUF
+	BLO	600$
+	MOV	#WINDOW,R5
+600$:	CMPB	(R4)+,(R5)+
+	BNE	M602			;@R4<>@R5
+	INC	@SP
+LCONS=.+2
+	CMP	@SP,#MAXCON		;MATCHLEN=MAXCONSIDERENCE?
+	BLO	601$
+	MOV	(SP)+,R0
+	MOV	R2,@SP
+	ASL	R2
+	MOV	TREE(R2),R4
+	ROL	R4
+	BCS	6080$
+	CMP	TSMALL(R4),@SP
+	BNE	608$
+	MOV	R3,TSMALL(R4)
+	BR	609$
+6080$:	MOV	R3,TROOT(R4)
+	BR	609$
+608$:	MOV	R3,TLARGE(R4)
+609$:	MOV	R3,-(SP)
+	ASL	R3
+	MOV	TSMALL(R2),R5		;SMALL SON
+	MOV	R5,TSMALL(R3)
+	ASL	R5
+	MOV	@SP,TREE(R5)
+	MOV	TLARGE(R2),R5
+	MOV	R5,TLARGE(R3)		;LARGE SON
+	ASL	R5
+	MOV	@SP,TREE(R5)
+	MOV	TREE(R2),TREE(R3)	;PARENT
+	CLR	TREE(R2)
+	MOV	(SP)+,R3
+	MOV	(SP)+,R2
+	TSTB	-(R1)
+	RETURN
+	
+M602:	BLO	603$			;@R4<@R5
+	MOV	R2,R5
+	ASL	R5
+	MOV	TLARGE(R5),R4		;@R4>@R5
+	BNE	M607
+	MOV	R3,TLARGE(R5)
+	BR	610$
+603$:	MOV	R2,R5
+	ASL	R5
+	MOV	TSMALL(R5),R4
+	BNE	M607
+	MOV	R3,TSMALL(R5)
+610$:	
+	ASL	R3
+	MOV	R2,TREE(R3)
+	CLR	TSMALL(R3)
+	CLR	TLARGE(R3)
+	CMP	@SP,R0
+	BMI	611$
+	MOV	(SP)+,R0
+	TST	(SP)+
+	BR	612$
+611$:	TST	(SP)+
+	MOV	(SP)+,R2
+612$:	
+	ASR	R3
+	TSTB	-(R1)
+	RETURN
+
+;-----------------------------------------------------------------------------
+READ:	MOV	R0,-(SP)
+	MOV	#RAREA,R0
+203$:	EMT	375
+	BCS	TRERR
+	ADD	#512.,@#WORKB		;READ 512. BYTES
+	SUB	#512.,@#ALLB
+	BHI	200$
+	ADD	@#ALLB,@#WORKB
+	MOV	#<776+ALLR-FL1>/2,@#FL1
+200$:	MOV	#RAREA,R0
+	ADD	#512.,4(R0)
+	INC	2(R0)
+	CMP	4(R0),#WBUF
+	BNE	202$
+	MOV	#RBUF,4(R0)
+202$:	MOV	(SP)+,R0
+	RETURN
+;-----------------------------------------------------------------------------
+RWAIT:	MOV	R0,-(SP)
+	.WAIT	#3
+	BCC	M201$
+TRERR:	IOT
+	.ASCIZ	/Read error/
+	.EVEN
+M201$:	CALL	TYPE
+	MOV	(SP)+,R0
+	RETURN
+;-----------------------------------------------------------------------------
+WWAIT:	MOV	R0,-(SP)
+	.WAIT	#0
+	BCC	M200$
+TWERR:	IOT
+	.ASCIZ	/Write error/
+	.EVEN
+M200$:	CALL	TYPE
+	MOV	(SP)+,R0
+	RETURN
+;------------------------------------------------------------------------------
+WRITE:	MOV	R0,-(SP)		;WRITE CURRENT HALF OF BUFFER TO DISK
+	MOV	#WAREA,R0
+	TST	2(R0)
+	BNE	205$
+	MOV	R1,-(SP)
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	MOV	#BLK0,R1
+	MOV	4(R0),R2
+	MOV	#256.,R3
+206$:	MOV	(R2)+,(R1)+
+	SOB	R3,206$	
+	MOV	(SP)+,R3
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+205$:	EMT	375
+	BCS	TWERR
+	MOV	#WAREA,R0
+	INC	2(R0)
+	ADD	#512.,4(R0)
+	CMP	4(R0),#QELD
+	BNE	204$
+	MOV	#WBUF,4(R0)
+204$:	MOV	(SP)+,R0
+	RETURN
+;-----------------------------------------------------------------------------
+TYPE:	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	MOV	R4,-(SP)
+	MOV	#IB,R4
+	MOV	@#<RAREA+2>,R3
+	CALL	W2DEC
+	MOV	#OB,R4
+	MOV	@#<WAREA+2>,R3
+	CALL	W2DEC
+	MOV	#PROG,R0
+	EMT	351
+	MOV	(SP)+,R4
+	MOV	(SP)+,R3
+	MOV	(SP)+,R2
+	RETURN
+
+W2DEC:	MOV	#4,R0
+701$:	CLR	R2
+	DIV	#12,R2
+	ADD	#60,R3
+	MOVB	R3,-(R4)
+	MOV	R2,R3
+	BEQ	700$
+	SOB	R0,701$
+700$:	MOVB	#40,-(R4)
+	SOB	R0,700$
+	RETURN
+	
+PROG:	.ASCII	<15>/Progress: input:     /
+IB:	.ASCII	/  output:     /
+OB:	.BYTE	200
+	.EVEN
+;-----------------------------------------------------------------------------
+UNPST:	MOVB	(R0)+,R1		;GET FLAGS
+	MOV	#10,R4			;BITS COUNT
+M402:	ROR	R1
+	BCS	403$			;1?
+	MOVB	(R0)+,(R2)+		;MOV BYTE
+	BR	405$
+403$:	BISB	(R0)+,R3		;GET LOW BYTE
+	SWAB	R3
+	BISB	(R0)+,R3		;GET HIGH BYTE
+	MOV	R3,R5
+	BIC	#170000,R5		;OFFSET FROM CURRENT POSITION
+	BIC	R5,R3
+	ASHC	#-12.,R3
+	ADD	#3,R3
+	NEG	R5
+	ADD	R2,R5			;ADRESS
+404$:	MOVB	(R5)+,(R2)+
+	SOB	R3,404$
+405$:	CMP	R2,(PC)+
+CTOP:	0
+	BEQ	406$
+	SOB	R4,M402
+	BR	UNPST
+406$:	MOV	(PC)+,SP
+OLDSP:	0	
+	JMP	@(PC)+
+OLDPC:	0
+	.BLKW	4			;STACK
+LENGTH:	<UNP0ST-UNP0TOP+2+UNPTOP-UNPST>
+UNPTOP=.
+;-----------------------------------------------------------------------------
+UNP0ST:					;R2=START ADRESS
+	MOV	(SP)+,R3		;CODE LEN
+	MOV	SP,R1
+	MOV	@#50,R0			;WHERE PROGRAMM TO BE RELOCATED
+	MOV	R0,SP
+301$:	MOV	-(R1),-(R0)		;RELOCATE PROGRAMM
+	SOB	R3,301$
+	JMP	<UNPST-UNPTOP>(SP)	;UNPACK 2 ENTER POINT
+UNP0TOP=.
+;-----------------------------------------------------------------------------
+	.END
+                                                                                                                                                                                                                                                                                                                                                                              
